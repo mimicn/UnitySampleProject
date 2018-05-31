@@ -38,12 +38,14 @@ public class SortTest : MonoBehaviour
         c3_sorteditem = new int[items.Length];
         System.Array.Copy(items, c3_sorteditem, items.Length);
         SortClass sortclass = new SortClass();
+        int n = 0;
         sortclass.Sort<int>(
             c3_sorteditem,
             com,
-            (_b) => { },
+            (is_change, _b) => { ++n; },
             (_b) => { }
         );
+        Debug.Log("操作回数："+n+"回");
 
         StartCoroutine(Sort());
     }
@@ -51,15 +53,17 @@ public class SortTest : MonoBehaviour
     {
         SortClass sortclass = new SortClass();
         IntComparer com = new IntComparer();
+        int n = 0;
         yield return sortclass.SortUseIEnumerator<int>(
             items,
             com,
-            (_b) => { },
+            (is_change, _b) => { ++n; },
             (_b) => {
                 c2_sorteditem = items;
             },
             new WaitForSeconds(wait)
         );
+        Debug.Log("操作回数：" + n + "回");
     }
 	
 	// Update is called once per frame
