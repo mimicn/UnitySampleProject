@@ -45,11 +45,11 @@ public class SortTest : MonoBehaviour
                 items[k] = Mathf.FloorToInt(Random.Range(min_int, max_int + 1 - float.Epsilon));
             }
         }
-        for (int k = 0; k < items.Length; ++k)
-        {
-            dst_text.text += (items[k].ToString("D3") + "\t");
-        }
-        dst_text.text += "\n";
+        //for (int k = 0; k < items.Length; ++k)
+        //{
+        //    dst_text.text += (items[k].ToString("D3") + "\t");
+        //}
+        //dst_text.text += "\n";
 #if true //通常のソート
         List<int> sortlist = new List<int>(items);
         IntComparer com = new IntComparer();
@@ -85,6 +85,19 @@ public class SortTest : MonoBehaviour
             case SortType.RandomQuick:
                 {
                     sort_param = new QuickSortParameter<int>(
+                        com,
+                        () => { },
+                        (state, sorting_items, item_states) =>
+                        {
+                            ++n;
+                            if (dstint_text) { DistSortArray(state, sorting_items, item_states); }
+                        }
+                        );
+                }
+                break;
+            case SortType.Bitonic_NotUseGPGPUDemo:
+                {
+                    sort_param = new BytonicSortParameter<int>(
                         com,
                         () => { },
                         (state, sorting_items, item_states) =>

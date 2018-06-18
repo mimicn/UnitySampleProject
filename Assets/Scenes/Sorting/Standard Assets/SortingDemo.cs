@@ -36,6 +36,7 @@ namespace Sorting
         Compare = 1,//比較
         Exchange = 1 << 2,//交換
         Complete = 1 << 3,//完了
+        Start = 1 << 4,//最初
         Debug = 1 << 8,//デバッグ
     }
     public enum SortType
@@ -85,6 +86,12 @@ namespace Sorting
         public QuickSortParameter(Comparer<T> comparer, Action cb_complete_rmd, Action<SortState, T[], SortItemState[]> cb_action_rmd)
             : base(comparer, cb_complete_rmd, cb_action_rmd) { }
     }
+    public class BytonicSortParameter<T> : SortParameter<T>
+    {
+        private BytonicSortParameter() { }
+        public BytonicSortParameter(Comparer<T> comparer, Action cb_complete_rmd, Action<SortState, T[], SortItemState[]> cb_action_rmd)
+            : base(comparer, cb_complete_rmd, cb_action_rmd) { }
+    }
     /// <summary>
     /// 整列クラス
     /// </summary>
@@ -94,8 +101,6 @@ namespace Sorting
         T swap_temp;
         public SortClass() { }
         SortItemState[] dirty_items;
-        System.Action<bool, SortItemState[]> one_sort_cb;
-        System.Action<SortItemState[]> complete_cb;
         YieldInstruction waiter;
         // コールバックとして、ソート済みリストとダーティフラグを、配列(且つ参照型)で返す.
         /// <summary>
@@ -110,20 +115,10 @@ namespace Sorting
         /// <param name="i_complete_cb">ソートが完了したときに呼ばれるコールバック</param>
         /// <param name="sort_type">ソートの種類</param>
         public void Sort(T[] sort_item, Comparer<T> comparer,
-            System.Action<bool, SortItemState[]> i_one_sort_cb,
-            System.Action<SortItemState[]> i_complete_cb, Sorting.SortType sort_type)
+            SortParameter<T> sort_parameter, Sorting.SortType sort_type)
         {
-            one_sort_cb = i_one_sort_cb;
-            complete_cb = i_complete_cb;
-            waiter = new WaitForSeconds(0);
-
-            if (sort_item.Length > 1)
-            {
-                IEnumerator enumerator = IEnumStartSort_old(sort_item, comparer, sort_type);
-                RunIEnumerator(enumerator);
-
-                complete_cb(dirty_items);
-            }
+            IEnumerator enumerator = SortUseIEnumerator(sort_item, sort_parameter, new WaitForSeconds(0), sort_type);
+            RunIEnumerator(enumerator);
         }
         /// <summary>
         /// ソート関数
@@ -138,22 +133,6 @@ namespace Sorting
         /// <param name="i_wait_for_second">一回のソートで待つ条件</param>
         /// <param name="sort_type">ソートの種類</param>
         /// <returns></returns>
-        public IEnumerator SortUseIEnumerator_old(
-            T[] sort_item, System.Collections.Generic.Comparer<T> comparer,
-            System.Action<bool, SortItemState[]> i_one_sort_cb,
-            System.Action<SortItemState[]> i_complete_cb, WaitForSeconds i_wait_for_second, Sorting.SortType sort_type)
-        {
-            one_sort_cb = i_one_sort_cb;
-            complete_cb = i_complete_cb;
-            waiter = i_wait_for_second;
-            if (sort_item.Length > 1)
-            {
-                yield return IEnumStartSort_old(sort_item, comparer, sort_type);
-
-                complete_cb(dirty_items);
-            }
-        }
-
         public IEnumerator SortUseIEnumerator(
             T[] sort_item,
             SortParameter<T> sort_parameter,
@@ -189,6 +168,7 @@ namespace Sorting
         private IEnumerator IEnumStartSort(T[] sort_item, SortParameter<T> sort_parameter, SortType sortType)
         {
             dirty_items = new SortItemState[sort_item.Length];
+            sort_parameter.cb_action(SortState.Start, sort_item, dirty_items);
             switch (sortType)
             {
                 case SortType.Buble:
@@ -204,9 +184,44 @@ namespace Sorting
                 case SortType.Insert:
                     break;
                 case SortType.Bitonic_NotUseGPGPUDemo:
+                    if (sort_parameter is BytonicSortParameter<T>)
                     {
-                        break;
+                        if (Mathf.IsPowerOfTwo(sort_item.Length))
+                        {
+                            yield return IEnumBitonicNotUseGPGPUDemo(sort_item, sort_parameter as BytonicSortParameter<T>, 0, sort_item.Length);
+                        }
+                        else
+                        {
+                            //アイテム数の、べき乗切り上げ.
+                            int itemlength_pow2 = Mathf.NextPowerOfTwo(sort_item.Length);
+                            //アイテム数の、べき乗切り上げの指数.
+                            int itemlength_log2 = Mathf.RoundToInt(Mathf.Log(itemlength_pow2, 2));
+                            //最大値探索
+                            int max_index = 0;
+                            for (int k = 1; k < sort_item.Length; ++k)
+                            {
+                                if (sort_parameter.comparer.Compare(sort_item[k], sort_item[max_index]) > 0)
+                                {
+                                    max_index = k;
+                                }
+                            }
+                            //2の冪要素数の配列作成
+                            T[] sort_item_org = sort_item;
+                            sort_item = new T[itemlength_pow2];
+                            System.Array.Copy(sort_item_org, sort_item, sort_item_org.Length);
+                            for (int k = sort_item_org.Length; k < sort_item.Length; ++k)
+                            {
+                                sort_item[k] = sort_item[max_index];
+                            }
+                            SortItemState[] dirty_items_origin = dirty_items;
+                            dirty_items = new SortItemState[sort_item.Length];
+                            yield return IEnumBitonicNotUseGPGPUDemo(sort_item, sort_parameter as BytonicSortParameter<T>, 0, sort_item.Length);
+                            System.Array.Copy(sort_item, sort_item_org, sort_item_org.Length);
+                            System.Array.Copy(dirty_items, dirty_items_origin, dirty_items_origin.Length);
+                            sort_item = sort_item_org;
+                        }
                     }
+                    break;
                 case SortType.Quick:
                     if (sort_parameter is QuickSortParameter<T>)
                     {
@@ -221,58 +236,6 @@ namespace Sorting
                     break;
             }
             sort_parameter.cb_action(SortState.Complete, sort_item, dirty_items);
-        }
-        private IEnumerator IEnumStartSort_old(T[] sort_item, Comparer<T> comparer, SortType sortType)
-        {
-            dirty_items = new SortItemState[sort_item.Length];
-            switch (sortType)
-            {
-                case SortType.Buble:
-                    //yield return IEnumBubleSort(sort_item, comparer);
-                    break;
-                case SortType.Insert:
-                    break;
-                case SortType.Bitonic_NotUseGPGPUDemo:
-                    {
-                        if (Mathf.IsPowerOfTwo(sort_item.Length))
-                        {
-                            yield return IEnumBitonicNotUseGPGPUDemo(sort_item, comparer, 0, sort_item.Length);
-                        }
-                        else
-                        {
-                            //アイテム数の、べき乗切り上げ.
-                            int itemlength_pow2 = Mathf.NextPowerOfTwo(sort_item.Length);
-                            //アイテム数の、べき乗切り上げの指数.
-                            int itemlength_log2 = Mathf.RoundToInt(Mathf.Log(itemlength_pow2, 2));
-                            //最大値探索
-                            int max_index = 0;
-                            for (int k = 1; k < sort_item.Length; ++k)
-                            {
-                                if (comparer.Compare(sort_item[k], sort_item[max_index]) > 0)
-                                {
-                                    max_index = k;
-                                }
-                            }
-                            //2の冪要素数の配列作成
-                            T[] sort_item_org = sort_item;
-                            sort_item = new T[itemlength_pow2];
-                            System.Array.Copy(sort_item_org, sort_item, sort_item_org.Length);
-                            for (int k = sort_item_org.Length + 1; k < sort_item.Length; ++k)
-                            {
-                                sort_item[k] = sort_item[max_index];
-                            }
-                            dirty_items = new SortItemState[sort_item.Length];
-                            yield return IEnumBitonicNotUseGPGPUDemo(sort_item, comparer, 0, sort_item.Length);
-                        }
-                        break;
-                    }
-                case SortType.Quick:
-                    //yield return IEnumQuickSort(sort_item, comparer, 0, sort_item.Length);
-                    break;
-                case SortType.RandomQuick:
-                    //yield return IEnumRandomQuickSort(sort_item, comparer, 0, sort_item.Length);
-                    break;
-            }
         }
         private IEnumerator IEnumBubleSort(T[] sort_item, BubleSortParameter<T> sort_parameter)
         {
@@ -329,56 +292,55 @@ namespace Sorting
             while (true)
             {//両端から、入れ替えの必要な二つを探して交換する
                 if(front_ite >= left) { dirty_items[front_ite] |= SortItemState.Comparison; }
-                while (front_ite < back_ite)
+                while (true)
                 {
-                    --back_ite;
-                    dirty_items[back_ite] |= SortItemState.Comparison;
-                    sort_parameter.cb_action(SortState.Compare, sort_item, dirty_items);
-                    dirty_items[back_ite] &= ~SortItemState.Comparison;
-                    if (sort_parameter.comparer.Compare(sort_item[pivot], sort_item[back_ite]) > 0)
+                    if (front_ite + 1 < back_ite)
                     {
-                        break;
+                        --back_ite;
+                        dirty_items[back_ite] |= SortItemState.Comparison;
+                        sort_parameter.cb_action(SortState.Compare, sort_item, dirty_items);
+                        dirty_items[back_ite] &= ~SortItemState.Comparison;
+                        if (sort_parameter.comparer.Compare(sort_item[pivot], sort_item[back_ite]) > 0)
+                        {
+                            break;
+                        }
                     }
                     else
                     {
+                        next_pivot_index[0] = back_ite - 1;
+                        if (front_ite >= left) { dirty_items[front_ite] &= ~SortItemState.Comparison; }
+                        yield break;
                     }
                 }
                 if (front_ite >= left) { dirty_items[front_ite] &= ~SortItemState.Comparison; }
-                if (front_ite >= back_ite)
-                {
-                    dst_pivot = back_ite;
-                    break;
-                }
                 dirty_items[back_ite] |= SortItemState.Comparison;
-                while (front_ite < back_ite)
+                while (true)
                 {
-                    ++front_ite;
-                    dirty_items[front_ite] |= SortItemState.Comparison;
-                    //sort_parameter.cb_action(SortState.Compare, sort_item, dirty_items);
-                    sort_parameter.cb_action(SortState.Debug, sort_item, dirty_items);
-                    dirty_items[front_ite] &= ~SortItemState.Comparison;
-                    if (sort_parameter.comparer.Compare(sort_item[pivot], sort_item[front_ite]) < 0)
+                    if (front_ite + 1 < back_ite)
                     {
-                        break;
+                        ++front_ite;
+                        dirty_items[front_ite] |= SortItemState.Comparison;
+                        sort_parameter.cb_action(SortState.Compare, sort_item, dirty_items);
+                        dirty_items[front_ite] &= ~SortItemState.Comparison;
+                        if (sort_parameter.comparer.Compare(sort_item[pivot], sort_item[front_ite]) < 0)
+                        {
+                            break;
+                        }
                     }
                     else
                     {
+                        next_pivot_index[0] = back_ite;
+                        dirty_items[back_ite] &= ~SortItemState.Comparison;
+                        yield break;
                     }
                 }
                 dirty_items[back_ite] &= ~SortItemState.Comparison;
-                if (front_ite >= back_ite)
-                {
-                    //dst_pivot = back_ite + 1;
-                    dst_pivot = front_ite;
-                    break;
-                }
                 swap_temp = sort_item[front_ite]; sort_item[front_ite] = sort_item[back_ite]; sort_item[back_ite] = swap_temp;
                 dirty_items[front_ite] = dirty_items[back_ite] |= SortItemState.Exchanged | SortItemState.Comparison;
                 sort_parameter.cb_action(SortState.Exchange, sort_item, dirty_items);
                 dirty_items[front_ite] = dirty_items[back_ite] &= ~(SortItemState.Exchanged | SortItemState.Comparison);
                 yield return waiter;
             }
-            next_pivot_index[0] = dst_pivot;
         }
         private IEnumerator IEnumQuickSort(T[] sort_item, QuickSortParameter<T> sort_parameter, int left, int right)
         {
@@ -390,7 +352,6 @@ namespace Sorting
 
             int back_ite = pivot_index[0] - 1;
             if (pivot_index[0] <= left) { }
-            //else if (pivot_index[0] >= right) { }
             else
             {
                 {//先頭と境界を入れ替える
@@ -447,7 +408,6 @@ namespace Sorting
 
             int back_ite = pivot_index[0] - 1;
             if (pivot_index[0] <= left) { }
-            //else if (pivot_index[0] >= right) { }
             else
             {
                 {//先頭と境界を入れ替える
@@ -479,7 +439,7 @@ namespace Sorting
             }
         }
 
-        private IEnumerator IEnumBitonicNotUseGPGPUDemo(T[] sort_item, Comparer<T> comparer, int left, int right)
+        private IEnumerator IEnumBitonicNotUseGPGPUDemo(T[] sort_item, BytonicSortParameter<T> sort_parameter, int left, int right)
         {
             int item_length = sort_item.Length;
             // 2の冪乗でなければ計算しない(5)
@@ -488,10 +448,13 @@ namespace Sorting
             {
                 dirty_items[d_i] |= SortItemState.DisableArea;
             }
-            Action<int, int> ChangeItemEvent = (l_tmp, r_tmp) => {
+            Action<int, int> ExchangeItemEvent = (l_tmp, r_tmp) => {
                 dirty_items[l_tmp] = dirty_items[r_tmp] |= SortItemState.Exchanged;
-                one_sort_cb(true, dirty_items);
+                sort_parameter.cb_action(SortState.Exchange | SortState.Compare, sort_item, dirty_items);
                 dirty_items[l_tmp] = dirty_items[r_tmp] &= ~SortItemState.Exchanged;
+            };
+            Action NoExchangeItemEvent = () => {
+                sort_parameter.cb_action(SortState.Compare, sort_item, dirty_items);
             };
             int comp_l, comp_r, block, step;
             for (block = 2; block <= item_length; block *= 2)//各ブロックの大きさ.
@@ -507,21 +470,21 @@ namespace Sorting
                             T v1 = sort_item[comp_l];T v2 = sort_item[comp_r];
                             if ((comp_l & block) != 0)
                             { // (3)
-                                if (comparer.Compare (v1, v2) < 0)
+                                if (sort_parameter.comparer.Compare (v1, v2) < 0)
                                 { // (4)
                                     sort_item[comp_r] = v1; sort_item[comp_l] = v2;
-                                    ChangeItemEvent(comp_l, comp_r);
+                                    ExchangeItemEvent(comp_l, comp_r);
                                 }
-                                else { one_sort_cb(false, dirty_items); }
+                                else { NoExchangeItemEvent(); }
                             }
                             else
                             {
-                                if (comparer.Compare(v1, v2) > 0)
+                                if (sort_parameter.comparer.Compare(v1, v2) > 0)
                                 {
                                     sort_item[comp_r] = v1; sort_item[comp_l] = v2;
-                                    ChangeItemEvent(comp_l, comp_r);
+                                    ExchangeItemEvent(comp_l, comp_r);
                                 }
-                                else { one_sort_cb(false, dirty_items); }
+                                else { NoExchangeItemEvent(); }
                             }
                             dirty_items[comp_l] = dirty_items[comp_r] &= ~SortItemState.Comparison;
                             yield return waiter;
